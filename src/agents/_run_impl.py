@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
-from collections.abc import Awaitable
+from collections.abc import AsyncGenerator, Awaitable, Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator, cast
 
@@ -551,15 +551,31 @@ class RunImpl:
                 if config.trace_include_sensitive_data:
                     span_fn.span_data.input = tool_call.arguments
                 try:
-                    _, _, result = await asyncio.gather(
+                    await asyncio.gather(
                         hooks.on_tool_start(tool_context, agent, func_tool),
                         (
                             agent.hooks.on_tool_start(tool_context, agent, func_tool)
                             if agent.hooks
                             else _coro.noop_coroutine()
                         ),
-                        func_tool.on_invoke_tool(tool_context, tool_call.arguments),
                     )
+
+                    result = await func_tool.on_invoke_tool(tool_context, tool_call.arguments)
+
+                    if inspect.isasyncgen(result):
+                        result = await cls._consume_async_generator(
+                            result,
+                            func_tool,
+                            tool_call,
+                            event_queue,
+                        )
+                    elif inspect.isgenerator(result):
+                        result = await cls._consume_generator(
+                            result,
+                            func_tool,
+                            tool_call,
+                            event_queue,
+                        )
 
                     await asyncio.gather(
                         hooks.on_tool_end(tool_context, agent, func_tool, result),
@@ -935,7 +951,7 @@ class RunImpl:
             except StopAsyncIteration as e:
                 return e.value
             if event_queue is not None:
-                event_queue.put_nowait(
+                await event_queue.put(
                     ToolYieldStreamEvent(
                         tool_name=tool.name,
                         tool_call_id=tool_call.call_id,
@@ -944,7 +960,7 @@ class RunImpl:
                 )
 
     @staticmethod
-    def _consume_generator(
+    async def _consume_generator(
         gen: Generator[Any, None, Any],
         tool: FunctionTool,
         tool_call: ResponseFunctionToolCall,
@@ -956,13 +972,14 @@ class RunImpl:
             except StopIteration as e:
                 return e.value
             if event_queue is not None:
-                event_queue.put_nowait(
+                await event_queue.put(
                     ToolYieldStreamEvent(
                         tool_name=tool.name,
                         tool_call_id=tool_call.call_id,
                         value=value,
                     )
                 )
+            await asyncio.sleep(0)
 
     @classmethod
     async def _check_for_final_output_from_tools(
