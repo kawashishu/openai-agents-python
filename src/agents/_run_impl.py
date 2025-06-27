@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
-from collections.abc import Awaitable
+from collections.abc import AsyncGenerator, Awaitable, Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -64,7 +64,7 @@ from .logger import logger
 from .model_settings import ModelSettings
 from .models.interface import ModelTracing
 from .run_context import RunContextWrapper, TContext
-from .stream_events import RunItemStreamEvent, StreamEvent
+from .stream_events import RunItemStreamEvent, StreamEvent, ToolYieldStreamEvent
 from .tool import (
     ComputerTool,
     FunctionTool,
@@ -238,6 +238,7 @@ class RunImpl:
         hooks: RunHooks[TContext],
         context_wrapper: RunContextWrapper[TContext],
         run_config: RunConfig,
+        event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] | None = None,
     ) -> SingleStepResult:
         # Make a copy of the generated items
         pre_step_items = list(pre_step_items)
@@ -253,6 +254,7 @@ class RunImpl:
                 hooks=hooks,
                 context_wrapper=context_wrapper,
                 config=run_config,
+                event_queue=event_queue,
             ),
             cls.execute_computer_actions(
                 agent=agent,
@@ -539,6 +541,7 @@ class RunImpl:
         hooks: RunHooks[TContext],
         context_wrapper: RunContextWrapper[TContext],
         config: RunConfig,
+        event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] | None = None,
     ) -> list[FunctionToolResult]:
         async def run_single_tool(
             func_tool: FunctionTool, tool_call: ResponseFunctionToolCall
@@ -548,15 +551,31 @@ class RunImpl:
                 if config.trace_include_sensitive_data:
                     span_fn.span_data.input = tool_call.arguments
                 try:
-                    _, _, result = await asyncio.gather(
+                    await asyncio.gather(
                         hooks.on_tool_start(tool_context, agent, func_tool),
                         (
                             agent.hooks.on_tool_start(tool_context, agent, func_tool)
                             if agent.hooks
                             else _coro.noop_coroutine()
                         ),
-                        func_tool.on_invoke_tool(tool_context, tool_call.arguments),
                     )
+
+                    result = await func_tool.on_invoke_tool(tool_context, tool_call.arguments)
+
+                    if inspect.isasyncgen(result):
+                        result = await cls._consume_async_generator(
+                            result,
+                            func_tool,
+                            tool_call,
+                            event_queue,
+                        )
+                    elif inspect.isgenerator(result):
+                        result = await cls._consume_generator(
+                            result,
+                            func_tool,
+                            tool_call,
+                            event_queue,
+                        )
 
                     await asyncio.gather(
                         hooks.on_tool_end(tool_context, agent, func_tool, result),
@@ -908,6 +927,49 @@ class RunImpl:
 
             if event:
                 queue.put_nowait(event)
+
+    @staticmethod
+    async def _consume_async_generator(
+        gen: AsyncGenerator[Any, None],
+        tool: FunctionTool,
+        tool_call: ResponseFunctionToolCall,
+        event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] | None,
+    ) -> Any:
+        while True:
+            try:
+                value = await gen.__anext__()
+            except StopAsyncIteration as e:
+                return e.value
+            if event_queue is not None:
+                await event_queue.put(
+                    ToolYieldStreamEvent(
+                        tool_name=tool.name,
+                        tool_call_id=tool_call.call_id,
+                        value=value,
+                    )
+                )
+
+    @staticmethod
+    async def _consume_generator(
+        gen: Generator[Any, None, Any],
+        tool: FunctionTool,
+        tool_call: ResponseFunctionToolCall,
+        event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] | None,
+    ) -> Any:
+        while True:
+            try:
+                value = next(gen)
+            except StopIteration as e:
+                return e.value
+            if event_queue is not None:
+                await event_queue.put(
+                    ToolYieldStreamEvent(
+                        tool_name=tool.name,
+                        tool_call_id=tool_call.call_id,
+                        value=value,
+                    )
+                )
+            await asyncio.sleep(0)
 
     @classmethod
     async def _check_for_final_output_from_tools(
