@@ -16,7 +16,7 @@ class DummyContext:
 
 
 def ctx_wrapper() -> ToolContext[DummyContext]:
-    return ToolContext(context=DummyContext(), tool_call_id="1")
+    return ToolContext(context=DummyContext(), tool_call_id="1", tool_name="test")
 
 
 @function_tool

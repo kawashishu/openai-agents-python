@@ -85,3 +85,7 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+### Custom tool events
+
+Tools can stream their own progress updates using `ToolContext.yield_event`. Any object passed to this method will be emitted as a `ToolYieldStreamEvent` and will not modify the agent's output or context.

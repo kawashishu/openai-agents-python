@@ -55,6 +55,7 @@ from .stream_events import (
     RawResponsesStreamEvent,
     RunItemStreamEvent,
     StreamEvent,
+    ToolYieldStreamEvent,
 )
 from .tool import (
     CodeInterpreterTool,
@@ -219,6 +220,7 @@ __all__ = [
     "RunItemStreamEvent",
     "AgentUpdatedStreamEvent",
     "StreamEvent",
+    "ToolYieldStreamEvent",
     "FunctionTool",
     "FunctionToolResult",
     "ComputerTool",
