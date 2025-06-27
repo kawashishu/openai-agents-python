@@ -5,7 +5,7 @@ import dataclasses
 import inspect
 from collections.abc import AsyncGenerator, Awaitable, Generator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator, cast
 
 from openai.types.responses import (
     ResponseComputerToolCall,
@@ -595,6 +595,16 @@ class RunImpl:
                     if isinstance(e, AgentsException):
                         raise e
                     raise UserError(f"Error running tool {func_tool.name}: {e}") from e
+
+                if inspect.isasyncgen(result):
+                    result = await cls._consume_async_generator(
+                        result,
+                        func_tool,
+                        tool_call,
+                        event_queue,
+                    )
+                elif inspect.isgenerator(result):
+                    result = cls._consume_generator(result, func_tool, tool_call, event_queue)
 
                 if config.trace_include_sensitive_data:
                     span_fn.span_data.output = result
