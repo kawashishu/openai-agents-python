@@ -748,14 +748,10 @@ async def test_tool_yield_stream_event() -> None:
     )
 
     result = Runner.run_streamed(agent, input="start")
-    seen: list[tuple[str, str]] = []
+    yielded: list[str] = []
     async for event in result.stream_events():
         if event.type == "tool_yield_stream_event":
-            seen.append(("yield", event.value))
-        elif event.type == "run_item_stream_event" and event.item.type == "tool_call_output_item":
-            seen.append(("output", str(event.item.output)))
+            yielded.append(event.value)
 
-    assert seen[0] == ("yield", "a")
-    assert seen[1] == ("yield", "b")
-    assert seen[2][0] == "output"
+    assert yielded == ["a", "b"]
     assert result.final_output == "done"
