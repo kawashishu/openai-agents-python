@@ -57,5 +57,26 @@ class AgentUpdatedStreamEvent:
     type: Literal["agent_updated_stream_event"] = "agent_updated_stream_event"
 
 
-StreamEvent: TypeAlias = Union[RawResponsesStreamEvent, RunItemStreamEvent, AgentUpdatedStreamEvent]
+@dataclass
+class ToolYieldStreamEvent:
+    """Event emitted when a tool yields a value."""
+
+    tool_name: str
+    """The name of the tool that yielded."""
+
+    tool_call_id: str
+    """The ID of the tool call."""
+
+    value: Any
+    """The yielded value."""
+
+    type: Literal["tool_yield_stream_event"] = "tool_yield_stream_event"
+
+
+StreamEvent: TypeAlias = Union[
+    RawResponsesStreamEvent,
+    RunItemStreamEvent,
+    AgentUpdatedStreamEvent,
+    ToolYieldStreamEvent,
+]
 """A streaming event from an agent."""

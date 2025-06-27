@@ -48,7 +48,12 @@ from .models.interface import Model, ModelProvider
 from .models.multi_provider import MultiProvider
 from .result import RunResult, RunResultStreaming
 from .run_context import RunContextWrapper, TContext
-from .stream_events import AgentUpdatedStreamEvent, RawResponsesStreamEvent
+from .stream_events import (
+    AgentUpdatedStreamEvent,
+    RawResponsesStreamEvent,
+    StreamEvent,
+    ToolYieldStreamEvent,
+)
 from .tool import Tool
 from .tracing import Span, SpanError, agent_span, get_current_trace, trace
 from .tracing.span_data import AgentSpanData
@@ -866,6 +871,7 @@ class AgentRunner:
             context_wrapper=context_wrapper,
             run_config=run_config,
             tool_use_tracker=tool_use_tracker,
+            event_queue=streamed_result._event_queue,
         )
 
         RunImpl.stream_step_result_to_queue(single_step_result, streamed_result._event_queue)
@@ -933,6 +939,7 @@ class AgentRunner:
             context_wrapper=context_wrapper,
             run_config=run_config,
             tool_use_tracker=tool_use_tracker,
+            event_queue=None,
         )
 
     @classmethod
@@ -950,6 +957,7 @@ class AgentRunner:
         context_wrapper: RunContextWrapper[TContext],
         run_config: RunConfig,
         tool_use_tracker: AgentToolUseTracker,
+        event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] | None = None,
     ) -> SingleStepResult:
         processed_response = RunImpl.process_model_response(
             agent=agent,
@@ -971,6 +979,7 @@ class AgentRunner:
             hooks=hooks,
             context_wrapper=context_wrapper,
             run_config=run_config,
+            event_queue=event_queue,
         )
 
     @classmethod
