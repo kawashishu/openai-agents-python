@@ -238,6 +238,7 @@ class RunImpl:
         hooks: RunHooks[TContext],
         context_wrapper: RunContextWrapper[TContext],
         run_config: RunConfig,
+        event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] | None = None,
     ) -> SingleStepResult:
         # Make a copy of the generated items
         pre_step_items = list(pre_step_items)
@@ -253,6 +254,7 @@ class RunImpl:
                 hooks=hooks,
                 context_wrapper=context_wrapper,
                 config=run_config,
+                event_queue=event_queue,
             ),
             cls.execute_computer_actions(
                 agent=agent,
@@ -539,24 +541,32 @@ class RunImpl:
         hooks: RunHooks[TContext],
         context_wrapper: RunContextWrapper[TContext],
         config: RunConfig,
+        event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] | None = None,
     ) -> list[FunctionToolResult]:
         async def run_single_tool(
             func_tool: FunctionTool, tool_call: ResponseFunctionToolCall
         ) -> Any:
             with function_span(func_tool.name) as span_fn:
-                tool_context = ToolContext.from_agent_context(context_wrapper, tool_call.call_id)
+                tool_context = ToolContext.from_agent_context(
+                    context_wrapper, tool_call.call_id, func_tool.name
+                )
                 if config.trace_include_sensitive_data:
                     span_fn.span_data.input = tool_call.arguments
                 try:
-                    _, _, result = await asyncio.gather(
-                        hooks.on_tool_start(tool_context, agent, func_tool),
-                        (
-                            agent.hooks.on_tool_start(tool_context, agent, func_tool)
-                            if agent.hooks
-                            else _coro.noop_coroutine()
-                        ),
-                        func_tool.on_invoke_tool(tool_context, tool_call.arguments),
-                    )
+                    token = current_tool_event_queue.set(event_queue) if event_queue else None
+                    try:
+                        _, _, result = await asyncio.gather(
+                            hooks.on_tool_start(tool_context, agent, func_tool),
+                            (
+                                agent.hooks.on_tool_start(tool_context, agent, func_tool)
+                                if agent.hooks
+                                else _coro.noop_coroutine()
+                            ),
+                            func_tool.on_invoke_tool(tool_context, tool_call.arguments),
+                        )
+                    finally:
+                        if token is not None:
+                            current_tool_event_queue.reset(token)
 
                     await asyncio.gather(
                         hooks.on_tool_end(tool_context, agent, func_tool, result),

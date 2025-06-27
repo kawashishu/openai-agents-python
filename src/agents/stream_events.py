@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Union
 
+import asyncio
+import contextvars
+
 from typing_extensions import TypeAlias
 
 from .agent import Agent
@@ -57,5 +60,29 @@ class AgentUpdatedStreamEvent:
     type: Literal["agent_updated_stream_event"] = "agent_updated_stream_event"
 
 
-StreamEvent: TypeAlias = Union[RawResponsesStreamEvent, RunItemStreamEvent, AgentUpdatedStreamEvent]
+@dataclass
+class ToolYieldStreamEvent:
+    """An event emitted when a tool yields a value."""
+
+    tool_name: str
+    """Name of the tool that yielded the value."""
+
+    data: Any
+    """The data yielded by the tool."""
+
+    type: Literal["tool_yield_event"] = "tool_yield_event"
+
+
+# Context variable that tools use to stream yielded objects
+current_tool_event_queue: contextvars.ContextVar[
+    asyncio.Queue["ToolYieldStreamEvent"] | None
+] = contextvars.ContextVar("current_tool_event_queue", default=None)
+
+
+StreamEvent: TypeAlias = Union[
+    RawResponsesStreamEvent,
+    RunItemStreamEvent,
+    AgentUpdatedStreamEvent,
+    ToolYieldStreamEvent,
+]
 """A streaming event from an agent."""
