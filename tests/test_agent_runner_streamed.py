@@ -721,3 +721,41 @@ async def test_dynamic_tool_addition_run_streamed() -> None:
 
     assert executed["called"] is True
     assert result.final_output == "done"
+
+
+@pytest.mark.asyncio
+async def test_tool_yield_stream_event() -> None:
+    model = FakeModel()
+
+    @function_tool(name_override="yield_tool")
+    def yield_tool() -> str:
+        yield "a"
+        yield "b"
+        return "c"
+
+    agent = Agent(
+        name="test",
+        model=model,
+        tools=[yield_tool],
+        tool_use_behavior="run_llm_again",
+    )
+
+    model.add_multiple_turn_outputs(
+        [
+            [get_function_tool_call("yield_tool", json.dumps({}))],
+            [get_text_message("done")],
+        ]
+    )
+
+    result = Runner.run_streamed(agent, input="start")
+    seen: list[tuple[str, str]] = []
+    async for event in result.stream_events():
+        if event.type == "tool_yield_stream_event":
+            seen.append(("yield", event.value))
+        elif event.type == "run_item_stream_event" and event.item.type == "tool_call_output_item":
+            seen.append(("output", str(event.item.output)))
+
+    assert seen[0] == ("yield", "a")
+    assert seen[1] == ("yield", "b")
+    assert seen[2][0] == "output"
+    assert result.final_output == "done"
